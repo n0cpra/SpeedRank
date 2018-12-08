@@ -33,10 +33,10 @@ public void __pl_jumptools_SetNTVOptional()
 native void JT_GotoClient(int client, int target);
 /*
 	@param			client
-	@param			-1 for map class and the rest 0-4
+	@param			int 0-4
 	@return			true if setting is on, false if off.
 		
-	@note Settings to get 0 Gets the status of superman, 1 Health Regen, 2 Ammo Regen, 3 Preview
+	@note Settings to get 0 Gets the status of superman, 1 Health Regen, 2 Ammo Regen, 3 Preview, 4 Both regen settings combinded.
 */
 native bool JT_GetSettings(int client, int JTSetting);
 
