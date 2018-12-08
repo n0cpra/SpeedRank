@@ -1,0 +1,45 @@
+# Prerequisites
+*.d
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Fortran module files
+*.mod
+*.smod
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+*.inc
+!jumpassist.inc
+!tf2attributes.inc
+!steamtools.inc
+!smlib/*.*
+!smlib.inc
+!jumptools.inc
+
+# Dir
+_backup
+plugins/_backup/cskillsrankv3.smx
+
+# Executables
+*.exe
+*.out
+*.app
+*.bat
+
