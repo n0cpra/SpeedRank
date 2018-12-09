@@ -1,9 +1,3 @@
-/*
-						TODO List
-		 	2. Need to do auto detect map class if using jumptools
-			4. DebugLog, and Theme support. <- Last
-*/
-// Needed stuff
 #include <speedrank>
 
 #undef REQUIRE_PLUGIN
@@ -63,14 +57,13 @@ public void OnPluginStart()
 	if (LibraryExists("jumptools"))
 	{
 		jt = true;
-		PrintToServer("%s JumpTools detected. Will play nice.", TAG);
+		DebugLog("JumpTools detected. Will play nice.");
 	}
 	// ConVars
 	CreateConVar("speedrank_version", PLUGIN_VERSION, "SpeedRank version", FCVAR_SPONLY | FCVAR_REPLICATED | FCVAR_NOTIFY);
 	cEnabled = CreateConVar("speedrank_enabled", "1", "Turns SpeedRank on, or off.", FCVAR_NOTIFY, true, 0.0, true, 1.0);
 	cDebug = CreateConVar("speedrank_debug", "1", "Turns SpeedRank debugging on or off.", FCVAR_NOTIFY, true, 0.0, true, 1.0);
-	cAllowedClasses = CreateConVar("speedrank_class", "3", "Sets the classes that can speed run (1 Soldier, 2 DemoMan, 3 All," ...
-								"4 Auto-detect (Only works if you're using jumptools).", FCVAR_NOTIFY, true, 1.0, true, 3.0);
+	cAllowedClasses = CreateConVar("speedrank_class", "3", "Sets the classes that can speed run (1 Soldier, 2 DemoMan, 3 All.", FCVAR_NOTIFY, true, 1.0, true, 3.0);
 	
 	// Stops the timer, and cancels the speed run.
 	RegConsoleCmd("sm_stoptimer", cmdStopTimer, "Stops your current speed run timer.");
@@ -101,7 +94,6 @@ public void OnPluginStart()
 	cHost = FindConVar("hostname");
 	char host[64];
 	cHost.GetString(host, sizeof host);
-	if (cDebug.BoolValue) { PrintToServer("%s SpeedRank %s running on %s", TAG, PLUGIN_VERSION, host); }
 	
 	// Hook entity output
 	HookEntityOutput("trigger_multiple", "OnStartTouch", OnStartTouch);
@@ -272,7 +264,7 @@ public Action cmdAdminMenu(int client, int args)
 	return Plugin_Handled;
 }
 // cmdShowTop -> Pick Course -> Show
-stock void cmdShowTop(int client, TFClassType class)
+void cmdShowTop(int client, TFClassType class)
 {
 	char name[MAX_NAME_LENGTH];
 	int course; float ftime;
@@ -442,10 +434,10 @@ void cmdSaveCourse(int client)
 	
 	if (cDebug.BoolValue)
 	{
-		PrintToServer("%s Course %i added by %N", TAG, iCourseCount, client);
-		PrintToServer("%s Course %i Start Point (%f %f %f) Angle: (%f)", TAG, iCourseCount, fOriginStart[0], fOriginStart[1], fOriginStart[2], fAnglesStart[1]);
-		PrintToServer("%s Course %i End Point (%f %f %f) Angle: (%f)", TAG, iCourseCount, fOriginEnd[0], fOriginEnd[1], fOriginEnd[2], fAnglesEnd[1]);
-		PrintToServer("Courses on this map: %i", iCourseCount);
+		DebugLog("Course %i added by %N", iCourseCount, client);
+		DebugLog("Course %i Start Point (%f %f %f) Angle: (%f)", iCourseCount, fOriginStart[0], fOriginStart[1], fOriginStart[2], fAnglesStart[1]);
+		DebugLog("Course %i End Point (%f %f %f) Angle: (%f)", iCourseCount, fOriginEnd[0], fOriginEnd[1], fOriginEnd[2], fAnglesEnd[1]);
+		DebugLog("Courses on this map: %i", iCourseCount);
 	}
 }
 void cmdAdminDisableSpeedRuns(int client)
@@ -455,14 +447,35 @@ void cmdAdminDisableSpeedRuns(int client)
 	else
 		bTemp = true;
 	CPrintToChatAll("%s has been {dodgerblue}%s{normal} ", TAG2, (bTemp ? "Enabled":"Disabled"));
-	if (cDebug.BoolValue) { PrintToServer("%s %N has %s speed running for this map.", TAG, client, (bTemp ? "Enabled":"Disabled")); }
+	if (cDebug.BoolValue) { DebugLog("%N has %s speed running for this map.", client, (bTemp ? "Enabled":"Disabled")); }
 }
 /******************************************************
 					  Functions						  *
 ******************************************************/
-stock void DebugLog(char[] text, any...)
+void DebugLog(char[] text, any ...)
 {
-	// Last thing to do. PrintToServer will work for my purposes
+	char path[PLATFORM_MAX_PATH], date[32], time[32];
+
+	FormatTime(date, sizeof date, "%m-%d-%y", GetTime());
+	FormatTime(time, sizeof time, "%I:%M:%S", GetTime());
+	BuildPath(Path_SM, path, PLATFORM_MAX_PATH, "logs/Speedrank-Log-%s.log", date);
+
+	int len = strlen(text) + 255;
+	char[] text2 = new char[len];
+	VFormat(text2, len, text, 2);
+	PrintToServer(text2);
+
+	if (!FileExists(path))
+	{
+		File log = OpenFile(path, "w");
+		log.WriteLine("----- SpeedRank log [Time:%s] [Date:%s] -----" , time, date);
+		log.WriteLine("[%s] %s", time, text2);
+		log.Close();
+	} else {
+		File log = OpenFile(path, "a");
+		log.WriteLine("[%s] %s", time, text2);
+		log.Close();
+	}
 }
 bool IsClientInWorld(int client)
 {
@@ -533,7 +546,7 @@ void CreateModels(int course_num, float[3] course_orig, float[3] course_ang, boo
 		TeleportEntity(EntFrog, course_orig, course_ang, NULL_VECTOR);
 		if (cDebug.BoolValue)
 		{
-			PrintToServer("%s Creating model %s Point (%f %f %f) Angle: (%f) for course # %i", TAG, (IsStart ? "Start":"End"), course_orig[0], course_orig[1], course_orig[2], course_ang[1], course_num);
+			DebugLog("Creating model %s Point (%f %f %f) Angle: (%f) for course # %i", (IsStart ? "Start":"End"), course_orig[0], course_orig[1], course_orig[2], course_ang[1], course_num);
 		}
 	}
 	
@@ -566,7 +579,7 @@ void CreateModels(int course_num, float[3] course_orig, float[3] course_ang, boo
 		
 		if (cDebug.BoolValue)
 		{
-			PrintToServer("%s Creating trigger model %s Point (%f %f %f) Angle: (%f) for course # %i", TAG, (IsStart ? "Start":"End"), 
+			DebugLog("Creating trigger model %s Point (%f %f %f) Angle: (%f) for course # %i", (IsStart ? "Start":"End"), 
 			course_orig[0], course_orig[1], course_orig[2], course_ang[1], course_num);
 		}
 	}
@@ -608,7 +621,7 @@ public void OnStartTouch(const char[] output, int caller, int activator, float d
 					bIsSpeedRunning[client] = true;
 					fRunnerTimeStart[client] = GetGameTime();
 					tSpeedTimer[client] = CreateTimer(1.0, UpdateHud, client, TIMER_REPEAT);
-					if (cDebug.BoolValue) { PrintToServer("%s - %N has started running course %i", TAG, client, iRunningCourse[client]); }
+					if (cDebug.BoolValue) { DebugLog("%N has started running course %i", client, iRunningCourse[client]); }
 				}
 			} else {
 				if (bIsSpeedRunning[client])
@@ -625,7 +638,7 @@ public void OnStartTouch(const char[] output, int caller, int activator, float d
 						bIsSpeedRunning[client] = true;
 						fRunnerTimeStart[client] = GetGameTime();
 						tSpeedTimer[client] = CreateTimer(1.0, UpdateHud, client, TIMER_REPEAT);
-						if (cDebug.BoolValue) { PrintToServer("%s - %N has re-started the speed timer.", TAG, client); }
+						if (cDebug.BoolValue) { DebugLog("%N has re-started the speed timer.", client); }
 					}
 				}
 			}
@@ -673,7 +686,7 @@ public void OnStartTouch(const char[] output, int caller, int activator, float d
 					iRunningCourse[client] = 0;
 					bIsSpeedRunning[client] = false;
 					if (tSpeedTimer[client] != INVALID_HANDLE) { delete tSpeedTimer[client]; }
-					if (cDebug.BoolValue) { PrintToServer("%s - %N has finished a course.", TAG, client); }
+					if (cDebug.BoolValue) { DebugLog("%N has finished a course.", client); }
 				}
 			}
 		} else {
@@ -726,13 +739,13 @@ void cEnabledChanged(ConVar convar, const char[] oldValue, const char[] newValue
 {
 	if (StringToInt(oldValue) != StringToInt(newValue))
 		convar.IntValue = StringToInt(newValue);
-	if (cDebug.BoolValue) { PrintToServer("%s Changed cEnabled to %s (from %s)", TAG, newValue, oldValue); }
+	if (cDebug.BoolValue) { DebugLog("Changed cEnabled to %s (from %s)", newValue, oldValue); }
 }
 void cDebugChanged(ConVar convar, const char[] oldValue, const char[] newValue)
 {
 	if (StringToInt(oldValue) != StringToInt(newValue))
 		convar.IntValue = StringToInt(newValue);
-	if (cDebug.BoolValue) { PrintToServer("%s Changed cDebug to %s (from %s)", TAG, newValue, oldValue); }
+	if (cDebug.BoolValue) { DebugLog("Changed cDebug to %s (from %s)", newValue, oldValue); }
 }
 void cAllowedClassesChanged(ConVar convar, const char[] oldValue, const char[] newValue)
 {
@@ -747,7 +760,7 @@ void cAllowedClassesChanged(ConVar convar, const char[] oldValue, const char[] n
 		CPrintToChatAll("%s All classes can speed run.", TAG2);
 		convar.IntValue = StringToInt(newValue);
 	}
-	if (cDebug.BoolValue) { PrintToServer("%s Changed cEnabled to %s (from %s)", TAG, newValue, oldValue); }
+	if (cDebug.BoolValue) { DebugLog("Changed cEnabled to %s (from %s)", newValue, oldValue); }
 }
 /******************************************************
 					DB Functions					  *
@@ -775,16 +788,16 @@ void GetPlayerProfile(int client)
 	dSpeedRank.Format(query, sizeof query, "SELECT * FROM `Players` WHERE SteamID = '%s'", sSteamID[client]);
 	dSpeedRank.Query(OnGetPlayerProfile, query, client, DBPrio_High);
 }
-stock void SaveTimes()
+void SaveTimes()
 {
 	if (cEnabled.BoolValue)
 	{
 		if (bPendingRecords)
 		{
-			if (cDebug.BoolValue) { PrintToServer("%s %i records to save.", TAG, QueIndex); }
+			if (cDebug.BoolValue) { DebugLog("%i records to save.", QueIndex); }
 			dSpeedRank.Execute(TimeQue);
 		} else {
-			if (cDebug.BoolValue) { PrintToServer("%s No records to save.", TAG); }
+			if (cDebug.BoolValue) { DebugLog("No records to save."); }
 		}
 		Soldier_Times.Dispose();
 		Demoman_Times.Dispose();
@@ -807,7 +820,7 @@ void CheckDatabase()
 	// Change this char to change auto increment for the right database.
 	strcopy(Ai, sizeof(Ai), (StrEqual(dType, "mysql", false)) ? "AUTO_INCREMENT" : "AUTOINCREMENT");
 	
-	if (cDebug.BoolValue) { PrintToServer("%s Using DB Driver %s - Set statement to %s", TAG, dType, Ai); }
+	if (cDebug.BoolValue) { DebugLog("Using DB Driver %s - Set statement to %s", dType, Ai); }
 	dSpeedRank.Format(query, sizeof query,
 						"CREATE TABLE IF NOT EXISTS `Courses` ( "...
 						"`ID` INTEGER PRIMARY KEY %s, "...
@@ -861,16 +874,17 @@ public void OnDatabaseConnect(Database db, const char[] error, any data)
 	{
 		// SetFailState, because we need this db to function. So disable speed rank for the rest of the map.
 		bTemp = true;
-		SetFailState("%s %s", TAG, error);
+		SetFailState("%s", error);
+		DebugLog("%s", error);
 		return;
 	}
-	if (cDebug.BoolValue) { PrintToServer("%s Database connected.", TAG); }
+	if (cDebug.BoolValue) { DebugLog("Database connected."); }
 	dSpeedRank = db;
 	
 	// We were loaded late, why?
 	if (bLate)
 	{
-		if (!bLate) { PrintToServer("%s Not late", TAG); } else { PrintToServer("%s Late", TAG); }
+		if (!bLate) { DebugLog("Loaded normally."); } else { DebugLog("Loaded late."); }
 		CPrintToChatAll("%s Plugin {dodgerblue}reloaded{default}.", TAG2);
 		for (int i = 1; i < MaxClients; i++)
 		{
@@ -898,12 +912,12 @@ public void OnDefault(Database db, DBResultSet results, const char[] error, any 
 		switch (view_as<int>(data))
 		{
 			// Checked table Courses
-			case 0: { PrintToServer("%s SQL query failed at Courses: (%s)", TAG, error); }
-			case 1: { PrintToServer("%s SQL query failed at Players: (%s)", TAG, error); }
-			case 2: { PrintToServer("%s SQL query failed at Times: (%s)", TAG, error); }
-			case 3: { PrintToServer("%s SQL query failed at Cheaters: (%s)", TAG, error); }
-			case 4: { PrintToServer("%s SQL query failed at Profile Creation: (%s)", TAG, error); }
-			case 5: { PrintToServer("%s SQL query failed at Profile Update Date: (%s)", TAG, error); }
+			case 0: { DebugLog("SQL query failed at Courses: (%s)", error); }
+			case 1: { DebugLog("SQL query failed at Players: (%s)", error); }
+			case 2: { DebugLog("SQL query failed at Times: (%s)", error); }
+			case 3: { DebugLog("SQL query failed at Cheaters: (%s)", error); }
+			case 4: { DebugLog("SQL query failed at Profile Creation: (%s)", error); }
+			case 5: { DebugLog("SQL query failed at Profile Update Date: (%s)", error); }
 		}
 	} else {
 		if (cDebug.BoolValue)
@@ -911,12 +925,12 @@ public void OnDefault(Database db, DBResultSet results, const char[] error, any 
 			switch (view_as<int>(data))
 			{
 				// Checked table Courses
-				case 0: { PrintToServer("%s Checking Courses, ok!", TAG); }
-				case 1: { PrintToServer("%s Checking Players, ok!", TAG); }
-				case 2: { PrintToServer("%s Checking Times, ok!", TAG); }
-				case 3: { PrintToServer("%s Checking Cheaters, ok!", TAG); }
-				case 4: { PrintToServer("%s Created a record for a new speed runner!", TAG); }
-				case 5: { PrintToServer("%s Updated a players record with a new date.", TAG); }
+				case 0: { DebugLog("Checking Courses, ok!"); }
+				case 1: { DebugLog("Checking Players, ok!"); }
+				case 2: { DebugLog("Checking Times, ok!"); }
+				case 3: { DebugLog("Checking Cheaters, ok!"); }
+				case 4: { DebugLog("Created a record for a new speed runner!"); }
+				case 5: { DebugLog("Updated a players record with a new date."); }
 			}
 		}
 	}
@@ -925,35 +939,35 @@ public void OnTimeSaved(Database db, DBResultSet results, const char[] error, an
 {
 	if (db == null || results == null)
 	{
-		PrintToServer("%s %s", TAG, error);
+		DebugLog("%s", error);
 		return;
 	}
 	if (results.AffectedRows > 0)
 	{
-		if (cDebug.BoolValue) { PrintToServer("%s Saved %i record to database.", TAG, results.AffectedRows); }
+		if (cDebug.BoolValue) { DebugLog("Saved %i record to database.", results.AffectedRows); }
 	}
 }
 public void OnDeleteCourse(Database db, DBResultSet results, const char[] error, any client)
 {
 	if (db == null || results == null)
 	{
-		PrintToServer("%s %s", TAG, error);
+		DebugLog("%s", error);
 		return;
 	}
 	if (results.AffectedRows > 0)
 	{
 		CPrintToChat(client, "%s Deleted %i course(s).", TAG2, results.AffectedRows);
-		if (cDebug.BoolValue) { PrintToServer("%s Deleted %i course(s)", TAG, results.AffectedRows); }
+		if (cDebug.BoolValue) { DebugLog("Deleted %i course(s)", results.AffectedRows); }
 	} else {
 		CPrintToChat(client, "%s No courses deleted.", TAG2);
-		if (cDebug.BoolValue) { PrintToServer("%s No courses deleted", TAG); }
+		if (cDebug.BoolValue) { DebugLog("No courses deleted"); }
 	}
 }
 public void OnSpawnModels(Database db, DBResultSet results, const char[] error, any data)
 {
 	if (db == null || results == null)
 	{
-		PrintToServer("%s %s", TAG, error);
+		DebugLog("%s", error);
 		return;
 	}
 	if (results.HasResults)
@@ -964,24 +978,24 @@ public void OnSpawnModels(Database db, DBResultSet results, const char[] error, 
 			orig[0] = results.FetchFloat(3); orig[1] = results.FetchFloat(4); orig[2] = results.FetchFloat(5);
 			ang[0] = 0.0; ang[1] = results.FetchFloat(6); ang[2] = 0.0;
 			CreateModels(results.FetchInt(1), orig, ang, true);
-			if (cDebug.BoolValue) { PrintToServer("%s Course # %i", TAG, results.FetchInt(1)); }
+			if (cDebug.BoolValue) { DebugLog("Course # %i", results.FetchInt(1)); }
 			
 			orig2[0] = results.FetchFloat(7); orig2[1] = results.FetchFloat(8); orig2[2] = results.FetchFloat(9);
 			ang2[0] = 0.0; ang2[1] = results.FetchFloat(10); ang2[2] = 0.0;
 			CreateModels(results.FetchInt(1), orig2, ang2, false);
-			if (cDebug.BoolValue) { PrintToServer("%s Course # %i", TAG, results.FetchInt(1)); }
+			if (cDebug.BoolValue) { DebugLog("Course # %i", results.FetchInt(1)); }
 			iCourseCount++;
 			bHasCourse = true;
 		}
 	} else {
-		if (cDebug.BoolValue) { PrintToServer("%s No models to spawn.", TAG); }
+		if (cDebug.BoolValue) { DebugLog("No models to spawn."); }
 	}
 }
 public void OnLoadTimes(Database db, DBResultSet results, const char[] error, any data)
 {
 	if (db == null || results == null)
 	{
-		PrintToServer("%s %s", TAG, error);
+		DebugLog("%s", error);
 		return;
 	}
 
@@ -990,7 +1004,7 @@ public void OnLoadTimes(Database db, DBResultSet results, const char[] error, an
 		float start;
 		start = GetEngineTime();
 		char name[MAX_NAME_LENGTH];
-		if (cDebug.BoolValue) { PrintToServer("%s Parsing speed runs (%i records)", TAG, results.RowCount); }
+		if (cDebug.BoolValue) { DebugLog("Parsing speed runs (%i records)", results.RowCount); }
 		int soldier_record = 0, demoman_record = 0, engineer_record = 0;
 		while (results.FetchRow())
 		{
@@ -1022,7 +1036,7 @@ public void OnLoadTimes(Database db, DBResultSet results, const char[] error, an
 			} else { continue; }
 		}
 		float end = (GetEngineTime() - start);
-		if (cDebug.BoolValue) { PrintToServer("%s Loaded %i Soldier records, %i Demoman records, %i Engineeer records to memory in %f second(s)", TAG, soldier_record, 
+		if (cDebug.BoolValue) { DebugLog("Loaded %i Soldier records, %i Demoman records, %i Engineeer records to memory in %f second(s)", soldier_record, 
 								demoman_record, engineer_record, end); }
 	}
 }
@@ -1030,7 +1044,7 @@ public void OnShowCourse(Database db, DBResultSet results, const char[] error, a
 {
 	if (db == null || results == null)
 	{
-		PrintToServer("%s %s", TAG, error);
+		DebugLog("%s", error);
 		return;
 	}
 
@@ -1055,7 +1069,7 @@ public void OnGetPlayerProfile(Database db, DBResultSet results, const char[] er
 {
 	if (db == null || results == null)
 	{
-		PrintToServer("%s %s", TAG, error);
+		DebugLog("%s", error);
 		return;
 	}
 	
@@ -1074,13 +1088,13 @@ public void OnGetPlayerProfile(Database db, DBResultSet results, const char[] er
 			dSpeedRank.Query(OnDefault, query, 5);
 		}
 		
-		if (cDebug.BoolValue) { PrintToServer("%s %N connected, and has a record.", TAG, client); }
+		if (cDebug.BoolValue) { DebugLog("%N connected, and has a record.", client); }
 	} else {
 		char query[100]; char date[32];
 		FormatTime(date, sizeof date, "%m,%d,%y");
 		dSpeedRank.Format(query, sizeof query, "INSERT INTO `Players` VALUES(null, '%s', '%s', '1', '1');", sSteamID[client], date);
 		dSpeedRank.Query(OnDefault, query, 4);
-		if (cDebug.BoolValue) { PrintToServer("%s %N connected, and has no record. Creating.", TAG, client); }
+		if (cDebug.BoolValue) { DebugLog("%N connected, and has no record. Creating.", client); }
 	}
 }
 public void OnSavedCourse(Database db, DBResultSet results, const char[] error, any client)
@@ -1143,7 +1157,7 @@ Action UpdateHud(Handle timer, any client)
 		ShowSyncHudText(client, tTimeToBeat, "#3 %02i:%02i:%02i", bHour, bMinute, bSecond);
 	}
 }
-stock float GetTopTime(int course, int class, int spot)
+float GetTopTime(int course, int class, int spot)
 {
 	if (class == 3)
 		return Soldier_Times.GetFloat(Key("Time", course, class, spot));
