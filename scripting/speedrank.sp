@@ -1,12 +1,18 @@
+/*
+		Proposed Changes
+		1. Make a menu to show times.
+		2. Function to see if the map has a course, and if not disable speedrank.
+		3. Change from HookEntityOutPut to SDKHook?
+		4. Possible need for bool IsValidTrigger(ent) to check if the trigger they touch is a speedrank trigger.
+*/
 #include <speedrank>
-
-#undef REQUIRE_PLUGIN
-#include <jumptools>
-#define REQUIRE_PLUGIN
 
 // Our Database!
 Database
 		dSpeedRank = null;
+// Query Queue
+Transaction
+		TimeQue;
 
 // ConVars, for uh ConVars
 ConVar
@@ -15,33 +21,29 @@ ConVar
 // bIsSpeedRunning tells me if they are currently speed running or not. bCapSpeedRun is their toggle to turn off speed running (temp)
 // bNoSteamID will tell me if we have their Steam ID or not.
 bool
-		bIsSpeedRunning[MAXPLAYERS + 1], bCanSpeedRun[MAXPLAYERS + 1], bNoSteamID[MAXPLAYERS + 1], 
-		bUseSounds[MAXPLAYERS + 1], jt = false, bPendingRecords = false, bTemp = true, bHasStart = false, 
-		bHasEnd = false, bLate = false, bHasCourse = false;
+		bIsSpeedRunning[MAXPLAYERS+1], bCanSpeedRun[MAXPLAYERS+1], bNoSteamID[MAXPLAYERS+1], 
+		jt = false, bPendingRecords = false, bTemp = true, bHasStart = false, 
+		bHasEnd = false, bLate = false, bHasCourse = false, bCanUpdate[MAXPLAYERS+1] = false;
 
-// Number of courses on the map
+// Number of courses on the map.. iCourse[MAX_COURSES][MAX_CLASSES][MAX_RECORDS]
 int
-		iCourseCount = 0, iRunningCourse[MAXPLAYERS + 1], QueIndex = 0;
+		iCourseCount = 0, iRunningCourse[MAXPLAYERS+1], QueIndex = 0, iRecords[MAX_COURSES][MAX_CLASSES],
+		iButtons[MAXPLAYERS+1], iTotalRecords = 0;
 
-// These hold the actual float values for the run / hud messages. Origin/Angles for course adding.
+// These hold the actual float values for the run/hud messages. Origin/Angles for course adding.
 float
-		fRunnerTimeStart[MAXPLAYERS + 1], fRunnerTimeEnd[MAXPLAYERS + 1];
+		fRunnerTimeStart[MAXPLAYERS+1], fRunnerTimeEnd[MAXPLAYERS+1], fTimes[MAX_COURSES][MAX_CLASSES][MAX_RECORDS],
+		fOriginStart[3], fAnglesStart[3], fOriginEnd[3], fAnglesEnd[3];
 
 // These are pretty obvious by the names?
 char
-		sSteamID[MAXPLAYERS + 1], sMapName[MAX_NAME_LENGTH];
+		sSteamID[MAXPLAYERS+1], sMapName[MAX_NAME_LENGTH], cName[MAX_COURSES][MAX_CLASSES][MAX_RECORDS][MAX_NAME_LENGTH];
 
 // tYourTime shows your current speed run time, tTimeToBeat shows what time you have left, tSpeedTimer[client] holds the timer handle.
 Handle
-		tYourTime, tTimeToBeat, tSpeedTimer[MAXPLAYERS + 1];
-Course
-		CreateCourse;
-Times
-		Soldier_Times, Demoman_Times, Engineer_Times;
+		tYourTime, tTimeToBeat, tSpeedTimer[MAXPLAYERS+1];
 Regex
 		expr;
-Transaction
-		TimeQue;
 /******************************************************
 					Forwards						  *
 ******************************************************/
@@ -63,7 +65,8 @@ public void OnPluginStart()
 	CreateConVar("speedrank_version", PLUGIN_VERSION, "SpeedRank version", FCVAR_SPONLY | FCVAR_REPLICATED | FCVAR_NOTIFY);
 	cEnabled = CreateConVar("speedrank_enabled", "1", "Turns SpeedRank on, or off.", FCVAR_NOTIFY, true, 0.0, true, 1.0);
 	cDebug = CreateConVar("speedrank_debug", "1", "Turns SpeedRank debugging on or off.", FCVAR_NOTIFY, true, 0.0, true, 1.0);
-	cAllowedClasses = CreateConVar("speedrank_class", "3", "Sets the classes that can speed run (1 Soldier, 2 DemoMan, 3 All.", FCVAR_NOTIFY, true, 1.0, true, 3.0);
+	cAllowedClasses = CreateConVar("speedrank_class", "3", "Sets the classes that can speed run (1 Soldier, 2 DemoMan, 3 Engineers, " ...
+									"4 All 3", FCVAR_NOTIFY, true, 1.0, true, 4.0);
 	
 	// Stops the timer, and cancels the speed run.
 	RegConsoleCmd("sm_stoptimer", cmdStopTimer, "Stops your current speed run timer.");
@@ -72,7 +75,7 @@ public void OnPluginStart()
 	RegConsoleCmd("sm_speedrank", cmdSRHelp, "Shows player commands");
 	
 	// This displays admin menu.
-	RegAdminCmd("sm_amenu", cmdAdminMenu, ADMFLAG_ROOT);
+	RegAdminCmd("sm_amenu", cmdAdminMenu, ADMFLAG_GENERIC);
 	
 	// Event hooks
 	HookEvent("teamplay_round_start", eRoundStart, EventHookMode_PostNoCopy);
@@ -119,10 +122,6 @@ public void OnMapStart()
 {
 	if (cEnabled.BoolValue)
 	{
-		Soldier_Times = new Times();
-		Demoman_Times = new Times();
-		Engineer_Times = new Times();
-		
 		TimeQue = new Transaction();
 
 		GetCurrentMap(sMapName, sizeof sMapName);
@@ -263,23 +262,21 @@ public Action cmdAdminMenu(int client, int args)
 	}
 	return Plugin_Handled;
 }
-// cmdShowTop -> Pick Course -> Show
 void cmdShowTop(int client, TFClassType class)
 {
-	char name[MAX_NAME_LENGTH];
-	int course; float ftime;
 	switch (class)
 	{
 		case TFClass_Soldier:
 		{
 			for (int i=1;i<=iCourseCount+1;i++)
 			{
+				CPrintToChat(client, "%s -[ Course %i ]-", TAG2, i);
 				for (int j=0;j<=2;j++)
 				{
-					Soldier_Times.GetString(Key("Name", i, 3, j), name, sizeof name);
-					course = Soldier_Times.GetInt(Key("Course", i, 3, j));
-					ftime = Soldier_Times.GetFloat(Key("Time", i, 3, j));
-					CPrintToChat(client, "%s #%i %s [Course %i] [Time %f]", TAG2, j+1, name, course, ftime);
+					if (!StrEqual(cName[i][3][j], ""))
+					{
+						CPrintToChat(client, "%s #%i %s [Course %i] [Time %s]", TAG2, j+1, cName[i][class][j], i, SpeedTime(fTimes[i][class][j]));
+					}
 				}
 			}
 		}
@@ -287,12 +284,13 @@ void cmdShowTop(int client, TFClassType class)
 		{
 			for (int i=1;i<=iCourseCount+1;i++)
 			{
+				CPrintToChat(client, "%s -[ Course %i ]-", TAG2, i);
 				for (int j=0;j<=2;j++)
 				{
-					Demoman_Times.GetString(Key("Name", i, 4, j), name, sizeof name);
-					course = Demoman_Times.GetInt(Key("Course", i, 4, j));
-					ftime = Demoman_Times.GetFloat(Key("Time", i, 4, j));
-					CPrintToChat(client, "%s #%i %s [Course %i] [Time %f]", TAG2, j+1, name, course, ftime);
+					if (!StrEqual(cName[i][class][j], ""))
+					{
+						CPrintToChat(client, "%s #%i %s [Course %i] [Time %s]", TAG2, j+1, cName[i][class][j], i, SpeedTime(fTimes[i][class][j]));
+					} 
 				}
 			}
 		}
@@ -300,12 +298,13 @@ void cmdShowTop(int client, TFClassType class)
 		{
 			for (int i=1;i<=iCourseCount+1;i++)
 			{
+				CPrintToChat(client, "%s -[ Course %i ]-", TAG2, i);
 				for (int j=0;j<=2;j++)
 				{
-					Engineer_Times.GetString(Key("Name", i, 9, j), name, sizeof name);
-					course = Engineer_Times.GetInt(Key("Course", i, 9, j));
-					ftime = Engineer_Times.GetFloat(Key("Time", i, 9, j));
-					CPrintToChat(client, "%s #%i %s [Course %i] [Time %f]", TAG2, j+1, name, course, ftime);
+					if (!StrEqual(cName[i][class][j], ""))
+					{
+						CPrintToChat(client, "%s #%i %s [Course %i] [Time %s]", TAG2, j+1, cName[i][class][j], i, SpeedTime(fTimes[i][class][j]));
+					}
 				}
 			}
 		}
@@ -363,7 +362,6 @@ void cmdResetCourse(int client)
 	if (bHasStart && bHasEnd || bHasStart)
 	{
 		bHasStart = false; bHasEnd = false;
-		CreateCourse.Dispose();
 		CPrintToChat(client, "%s You have reset the course.", TAG2);
 	}
 }
@@ -381,13 +379,8 @@ void cmdAddCourseStart(int client)
 		return;
 	}
 	
-	float fOriginStart[3], fAnglesStart[3];
-	
 	GetClientAbsOrigin(client, fOriginStart);
 	GetClientAbsAngles(client, fAnglesStart);
-	
-	CreateCourse.SetVector("Start_Orig", fOriginStart);
-	CreateCourse.SetVector("Start_Angl", fAnglesStart);
 	
 	bHasStart = true;
 }
@@ -398,27 +391,17 @@ void cmdAddCourseEnd(int client)
 		CPrintToChat(client, "%s You need to be spawned in the world to add a end point.", TAG2);
 		return;
 	}
-	float fOriginEnd[3], fAnglesEnd[3];
 	
 	GetClientAbsOrigin(client, fOriginEnd);
 	GetClientAbsAngles(client, fAnglesEnd);
-	
-	CreateCourse.SetVector("End_Orig", fOriginEnd);
-	CreateCourse.SetVector("End_Angl", fAnglesEnd);
+
 	bHasEnd = true;
 }
 void cmdSaveCourse(int client)
-{
-	float fOriginStart[3], fAnglesStart[3], fOriginEnd[3], fAnglesEnd[3];
-	
+{	
 	if (iCourseCount == 0) { iCourseCount = 1; } else { iCourseCount++; }
-	CreateCourse = new Course();
-	CreateCourse.GetVector("Start_Orig", fOriginStart);
-	CreateCourse.GetVector("Start_Angl", fAnglesStart);
+
 	CreateModels(iCourseCount, fOriginStart, fAnglesStart, true);
-	
-	CreateCourse.GetVector("End_Orig", fOriginEnd);
-	CreateCourse.GetVector("End_Angl", fAnglesEnd);
 	CreateModels(iCourseCount, fOriginEnd, fAnglesEnd, false);
 	
 	bHasStart = false; bHasEnd = false;
@@ -430,7 +413,6 @@ void cmdSaveCourse(int client)
 	dSpeedRank.Query(OnSavedCourse, query, client);
 	
 	CPrintToChat(client, "%s You have saved course {dodgerblue}Course %i{default}", TAG2, iCourseCount); bHasCourse = true;
-	CreateCourse.Dispose();
 	
 	if (cDebug.BoolValue)
 	{
@@ -452,6 +434,23 @@ void cmdAdminDisableSpeedRuns(int client)
 /******************************************************
 					  Functions						  *
 ******************************************************/
+int GetCourseCount()
+{
+	int entity, count = 0;
+	char name[MAX_NAME_LENGTH];
+	while ((entity = FindEntityByClassname(entity, "prop_dynamic")) != -1)
+	{
+		GetEntPropString(entity, Prop_Data, "m_iName", name, sizeof name);
+		if (StrContains(name, "CourseStart", false) != -1)
+		{
+			count++;
+			DebugLog("Entity %i Name %s", entity, name);
+		}
+	}
+	if (count == 0) { bTemp = false; }
+	if (cDebug.BoolValue) { DebugLog("Found %i Course(s) on %s.", count, sMapName); }
+	return count;
+}
 void DebugLog(char[] text, any ...)
 {
 	char path[PLATFORM_MAX_PATH], date[32], time[32];
@@ -463,7 +462,7 @@ void DebugLog(char[] text, any ...)
 	int len = strlen(text) + 255;
 	char[] text2 = new char[len];
 	VFormat(text2, len, text, 2);
-	PrintToServer(text2);
+	PrintToServer("%s %s", time, text2);
 
 	if (!FileExists(path))
 	{
@@ -480,7 +479,7 @@ void DebugLog(char[] text, any ...)
 bool IsClientInWorld(int client)
 {
 	TFTeam team = TF2_GetClientTeam(client);
-	if (team == TFTeam_Spectator || team == TFTeam_Unassigned)return false;
+	if (team == TFTeam_Spectator || team == TFTeam_Unassigned) return false;
 	return true;
 }
 int GetCourseNumber(char[] str)
@@ -508,7 +507,7 @@ void cmdDisableSpeedRuns(int client)
 		bCanSpeedRun[client] = true;
 	CPrintToChat(client, "%s You have {dodgerblue}%s{normal} speed running.", TAG2, (bCanSpeedRun[client] ? "Enabled":"Disabled"));
 }
-char SR_GetPlayerClass(int client)
+char GetPlayerClass(int client)
 {
 	char buffer[MAX_NAME_LENGTH];
 	if (IsValidClient(client))
@@ -587,11 +586,40 @@ void CreateModels(int course_num, float[3] course_orig, float[3] course_ang, boo
 bool IsUserRoot(int client) { return GetUserAdmin(client).HasFlag(Admin_Root); }
 bool IsUserAdmin(int client) { return GetUserAdmin(client).HasFlag(Admin_Generic); }
 bool IsValidClient(int client) { return (1 <= client <= MaxClients && IsClientInGame(client) && !IsFakeClient(client)); }
-char Key(char[] name, int course, int class, int record)
+float GetTopTime(int course, int class, int spot) {	return fTimes[course][class][spot-1]; }
+char SpeedTime(float time)
 {
-	char key[32];
-	Format(key, sizeof key, "%s%i%i%i", name, course, class, record);
-	return key; // return Time131
+	int h = (RoundToFloor(time) / 3600) % 24, m = (RoundToFloor(time) / 60) % 60;
+	int fs = RoundToFloor(FloatFraction(time) * 1000), is = RoundToFloor(time) % 60; 
+
+	char new_time[MAX_NAME_LENGTH];
+	Format(new_time, sizeof new_time, "%ih %im %is %ims", h, m, is, fs);
+
+	return new_time;
+}
+bool IsApprovedClass(int client)
+{
+	TFClassType class = TF2_GetPlayerClass(client);
+	switch (cAllowedClasses.IntValue)
+	{
+		case 1:
+		{
+			if (class == TFClass_Soldier) return true;
+		}
+		case 2:
+		{
+			if (class == TFClass_DemoMan) return true;
+		}
+		case 3:
+		{
+			if (class == TFClass_Engineer) return true;
+		}
+		case 4:
+		{
+			if (class == TFClass_Soldier || class == TFClass_DemoMan || class == TFClass_Engineer) return true;
+		}
+	}
+	return false;
 }
 /******************************************************
 						Events						  *
@@ -599,98 +627,93 @@ char Key(char[] name, int course, int class, int record)
 public void OnStartTouch(const char[] output, int caller, int activator, float delay)
 {
 	int client = activator;
-	if (cEnabled.BoolValue && IsValidClient(client))
+	if (cEnabled.BoolValue && IsValidClient(client) && IsApprovedClass(client))
 	{
-		int class_chk = view_as<int>(TF2_GetPlayerClass(client));
-		if (cAllowedClasses.IntValue == 3 || class_chk == cAllowedClasses.IntValue)
+		char ent_name[32], start_name[32], end_name[32];
+		GetEntPropString(caller, Prop_Data, "m_iName", ent_name, sizeof ent_name);
+		
+		// Not speed running so we let them touch the start trigger.
+		if (!bIsSpeedRunning[client] && bCanSpeedRun[client] && bTemp)
 		{
-			char ent_name[32], start_name[32], end_name[32];
-			GetEntPropString(caller, Prop_Data, "m_iName", ent_name, sizeof ent_name);
-			
-			// Not speed running so we let them touch the start trigger.
-			if (!bIsSpeedRunning[client] && bCanSpeedRun[client] && bTemp)
+			Format(start_name, sizeof start_name, "CourseStart_Trigger%i", GetCourseNumber(ent_name));
+			Format(end_name, sizeof end_name, "CourseEnd_Trigger%i", GetCourseNumber(ent_name));
+			// Touched a start trigger
+			if (strcmp(start_name, ent_name) == 0)
 			{
-				Format(start_name, sizeof start_name, "CourseStart_Trigger%i", GetCourseNumber(ent_name));
-				Format(end_name, sizeof end_name, "CourseEnd_Trigger%i", GetCourseNumber(ent_name));
-				// Touched a start trigger
+				if (jt) { JT_PrepSpeedRun(client); }
+				// Running the course of the trigger they touched.
+				iRunningCourse[client] = GetCourseNumber(ent_name);
+				bIsSpeedRunning[client] = true;
+				fRunnerTimeStart[client] = GetGameTime();
+				tSpeedTimer[client] = CreateTimer(1.0, UpdateHud, client, TIMER_REPEAT);
+				if (cDebug.BoolValue) { DebugLog("%N has started running course %i", client, iRunningCourse[client]); }
+			}
+		} else {
+			if (bIsSpeedRunning[client])
+			{
+				Format(start_name, sizeof start_name, "CourseStart_Trigger%i", iRunningCourse[client]);
 				if (strcmp(start_name, ent_name) == 0)
 				{
+					if (jt) { JT_EndSpeedRun(client); }
+					iRunningCourse[client] = 0;
+					bIsSpeedRunning[client] = false;
+					if (tSpeedTimer[client] != INVALID_HANDLE) { delete tSpeedTimer[client]; }
 					if (jt) { JT_PrepSpeedRun(client); }
-					// Running the course of the trigger they touched.
 					iRunningCourse[client] = GetCourseNumber(ent_name);
 					bIsSpeedRunning[client] = true;
 					fRunnerTimeStart[client] = GetGameTime();
 					tSpeedTimer[client] = CreateTimer(1.0, UpdateHud, client, TIMER_REPEAT);
-					if (cDebug.BoolValue) { DebugLog("%N has started running course %i", client, iRunningCourse[client]); }
-				}
-			} else {
-				if (bIsSpeedRunning[client])
-				{
-					Format(start_name, sizeof start_name, "CourseStart_Trigger%i", iRunningCourse[client]);
-					if (strcmp(start_name, ent_name) == 0)
-					{
-						if (jt) { JT_EndSpeedRun(client); }
-						iRunningCourse[client] = 0;
-						bIsSpeedRunning[client] = false;
-						if (tSpeedTimer[client] != INVALID_HANDLE) { delete tSpeedTimer[client]; }
-						if (jt) { JT_PrepSpeedRun(client); }
-						iRunningCourse[client] = GetCourseNumber(ent_name);
-						bIsSpeedRunning[client] = true;
-						fRunnerTimeStart[client] = GetGameTime();
-						tSpeedTimer[client] = CreateTimer(1.0, UpdateHud, client, TIMER_REPEAT);
-						if (cDebug.BoolValue) { DebugLog("%N has re-started the speed timer.", client); }
-					}
+					if (cDebug.BoolValue) { DebugLog("%N has re-started the speed timer.", client); }
 				}
 			}
-			if (bIsSpeedRunning[client])
+		}
+		if (bIsSpeedRunning[client])
+		{
+			Format(end_name, sizeof end_name, "CourseEnd_Trigger%i", iRunningCourse[client]);
+			if (strcmp(end_name, ent_name) == 0)
 			{
-				Format(end_name, sizeof end_name, "CourseEnd_Trigger%i", iRunningCourse[client]);
-				if (strcmp(end_name, ent_name) == 0)
+				fRunnerTimeEnd[client] = GetGameTime();				
+				float chk = GetGameTime() - fRunnerTimeStart[client];
+				float finishTime = (fRunnerTimeEnd[client] - fRunnerTimeStart[client]);
+				int class = view_as<int>(TF2_GetPlayerClass(client));
+				
+				char host[64], date[32], name[MAX_NAME_LENGTH];
+				GetClientName(client, name, sizeof name);
+				cHost.GetString(host, sizeof host);
+				FormatTime(date, sizeof date, "%m,%d,%y");
+				
+				if (GetTopTime(iRunningCourse[client], class, 1) > chk)
 				{
-					fRunnerTimeEnd[client] = GetGameTime();
-					float finishTime = (fRunnerTimeEnd[client] - fRunnerTimeStart[client]);
-					int nHours = (RoundToFloor(finishTime) / 3600) % 24; int nMinutes = (RoundToFloor(finishTime) / 60) % 60;
-					int fSeconds, iSeconds; iSeconds = RoundToFloor(finishTime) % 60;
-					
-					float chk = GetGameTime() - fRunnerTimeStart[client];
-					int class = view_as<int>(TF2_GetPlayerClass(client));
-					
-					char host[64], date[32], name[MAX_NAME_LENGTH];
-					GetClientName(client, name, sizeof name);
-					cHost.GetString(host, sizeof host);
-					FormatTime(date, sizeof date, "%m,%d,%y");
-					
-					if (GetTopTime(iRunningCourse[client], class, 1) > chk)
-					{
-						CPrintToChatAll("%s %N has placed #1 on course %i. Time %i:%i:%i.%i [%s]", TAG2, client, iRunningCourse[client], nHours, nMinutes, iSeconds, fSeconds, SR_GetPlayerClass(client));
-						EmitSoundToAll(RECORD_SOUND_B1, client, SNDCHAN_AUTO, SNDLEVEL_NORMAL, SND_NOFLAGS, SNDVOL_NORMAL, SNDPITCH_NORMAL, -1, NULL_VECTOR, NULL_VECTOR, true, 0.0);
-					} else if (GetTopTime(iRunningCourse[client], class, 2) > chk)
-					{
-						CPrintToChatAll("%s %N has placed #2 on course %i. Time %i:%i:%i.%i [%s]", TAG2, client, iRunningCourse[client], nHours, nMinutes, iSeconds, fSeconds, SR_GetPlayerClass(client));
-						EmitSoundToAll(RECORD_SOUND_B2, client, SNDCHAN_AUTO, SNDLEVEL_NORMAL, SND_NOFLAGS, SNDVOL_NORMAL, SNDPITCH_NORMAL, -1, NULL_VECTOR, NULL_VECTOR, true, 0.0);
-					} else if (GetTopTime(iRunningCourse[client], class, 3) > chk)
-					{
-						CPrintToChatAll("%s %N has placed #3 on course %i. Time %i:%i:%i.%i [%s]", TAG2, client, iRunningCourse[client], nHours, nMinutes, iSeconds, fSeconds, SR_GetPlayerClass(client));
-						EmitSoundToAll(RECORD_SOUND_B3, client, SNDCHAN_AUTO, SNDLEVEL_NORMAL, SND_NOFLAGS, SNDVOL_NORMAL, SNDPITCH_NORMAL, -1, NULL_VECTOR, NULL_VECTOR, true, 0.0);
-					} else {
-						CPrintToChat(client, "%s Good Run! Your time %i:%i:%i.%i [%s]", TAG2, nHours, nMinutes, iSeconds, fSeconds, SR_GetPlayerClass(client));
-					}
-					if (jt && !bNoSteamID[client])
-					{
-						JT_EndSpeedRun(client);
-						JT_ReloadPlayerSettings(client);
-						AddToQueue(name, sSteamID[client], iRunningCourse[client], finishTime, view_as<int>(class), date, JT_GetSettings(client, 4), host, sMapName);
-					} else {
-						AddToQueue(name, sSteamID[client], iRunningCourse[client], finishTime, view_as<int>(class), date, 0, host, sMapName);
-					}
-					iRunningCourse[client] = 0;
-					bIsSpeedRunning[client] = false;
-					if (tSpeedTimer[client] != INVALID_HANDLE) { delete tSpeedTimer[client]; }
-					if (cDebug.BoolValue) { DebugLog("%N has finished a course.", client); }
+					CPrintToChatAll("%s %N has placed #1 on course %i. Time %s [%s]", TAG2, client, iRunningCourse[client], SpeedTime(finishTime), GetPlayerClass(client));
+					EmitSoundToAll(RECORD_SOUND_B1, client, SNDCHAN_AUTO, SNDLEVEL_NORMAL, SND_NOFLAGS, SNDVOL_NORMAL, SNDPITCH_NORMAL, -1, NULL_VECTOR, NULL_VECTOR, true, 0.0);
+					if (cDebug.BoolValue) { DebugLog("%N has beaten record #1 (new time %s)", client, SpeedTime(finishTime)); }
+				} else if (GetTopTime(iRunningCourse[client], class, 2) > chk)
+				{
+					CPrintToChatAll("%s %N has placed #2 on course %i. Time %s [%s]", TAG2, client, iRunningCourse[client], SpeedTime(finishTime), GetPlayerClass(client));
+					EmitSoundToAll(RECORD_SOUND_B2, client, SNDCHAN_AUTO, SNDLEVEL_NORMAL, SND_NOFLAGS, SNDVOL_NORMAL, SNDPITCH_NORMAL, -1, NULL_VECTOR, NULL_VECTOR, true, 0.0);
+					if (cDebug.BoolValue) { DebugLog("%N has beaten record #2 (new time %s)", client, SpeedTime(finishTime)); }
+				} else if (GetTopTime(iRunningCourse[client], class, 3) > chk)
+				{
+					CPrintToChatAll("%s %N has placed #3 on course %i. Time %s [%s]", TAG2, client, iRunningCourse[client], SpeedTime(finishTime), GetPlayerClass(client));
+					EmitSoundToAll(RECORD_SOUND_B3, client, SNDCHAN_AUTO, SNDLEVEL_NORMAL, SND_NOFLAGS, SNDVOL_NORMAL, SNDPITCH_NORMAL, -1, NULL_VECTOR, NULL_VECTOR, true, 0.0);
+					if (cDebug.BoolValue) { DebugLog("%N has beaten record #3 (new time %s)", client, SpeedTime(finishTime)); }
+				} else {
+					CPrintToChat(client, "%s Good Run! Your time %s [%s]", TAG2, SpeedTime(finishTime), GetPlayerClass(client));
+					if (cDebug.BoolValue) { DebugLog("%N has not beaten any record(s). (time %s)", client, SpeedTime(finishTime)); }
 				}
+				if (jt && !bNoSteamID[client])
+				{
+					JT_EndSpeedRun(client);
+					JT_ReloadPlayerSettings(client);
+					AddToQueue(name, sSteamID[client], iRunningCourse[client], finishTime, view_as<int>(class), date, JT_GetSettings(client, 4), host, sMapName);
+				} else {
+					AddToQueue(name, sSteamID[client], iRunningCourse[client], finishTime, view_as<int>(class), date, 0, host, sMapName);
+				}
+				iRunningCourse[client] = 0;
+				bIsSpeedRunning[client] = false;
+				if (tSpeedTimer[client] != INVALID_HANDLE) { delete tSpeedTimer[client]; }
+				if (cDebug.BoolValue) { DebugLog("%N has finished a course.", client); }
 			}
-		} else {
-			CPrintToChat(client, "%s Your class cannot speed run at this time.", TAG2);	
 		}
 	}
 }
@@ -754,13 +777,16 @@ void cAllowedClassesChanged(ConVar convar, const char[] oldValue, const char[] n
 		CPrintToChatAll("%s Only Soldiers can speed run.", TAG2);
 		convar.IntValue = StringToInt(newValue);
 	} else if (StringToInt(newValue) == 2) {
-		CPrintToChatAll("%s Only Demoman can speed run.", TAG2);
+		CPrintToChatAll("%s Only Demomen can speed run.", TAG2);
 		convar.IntValue = StringToInt(newValue);
 	} else if (StringToInt(newValue) == 3) {
-		CPrintToChatAll("%s All classes can speed run.", TAG2);
+		CPrintToChatAll("%s Only Engineers can speed run.", TAG2);
+		convar.IntValue = StringToInt(newValue);
+	}  else if (StringToInt(newValue) == 4) {
+		CPrintToChatAll("%s All classes (Soldier, Demoman, Engineers) can speed run.", TAG2);
 		convar.IntValue = StringToInt(newValue);
 	}
-	if (cDebug.BoolValue) { DebugLog("Changed cEnabled to %s (from %s)", newValue, oldValue); }
+	if (cDebug.BoolValue) { DebugLog("Changed cAllowedClasses to %s (from %s)", newValue, oldValue); }
 }
 /******************************************************
 					DB Functions					  *
@@ -794,14 +820,11 @@ void SaveTimes()
 	{
 		if (bPendingRecords)
 		{
-			if (cDebug.BoolValue) { DebugLog("%i records to save.", QueIndex); }
+			if (cDebug.BoolValue) { DebugLog("%i record(s) to save.", QueIndex); }
 			dSpeedRank.Execute(TimeQue);
 		} else {
 			if (cDebug.BoolValue) { DebugLog("No records to save."); }
 		}
-		Soldier_Times.Dispose();
-		Demoman_Times.Dispose();
-		Engineer_Times.Dispose();
 	}
 }
 void LoadTimesForMap()
@@ -836,33 +859,33 @@ void CheckDatabase()
 						"`End4`	FLOAT NOT NULL);", Ai);
 	dSpeedRank.Query(OnDefault, query, 0, DBPrio_High);
 	dSpeedRank.Format(query, sizeof query, 
-					"CREATE TABLE IF NOT EXISTS `Players` ("...
-					"`ID` INTEGER PRIMARY KEY %s,"...
-					"`SteamID` TEXT NOT NULL UNIQUE,"...
-					"`LastSeen`TEXT NOT NULL,"...
-					"`UseSounds` INTEGER NOT NULL DEFAULT 1,"...
-					"`CanSpeedRun` INTEGER NOT NULL DEFAULT 1);", Ai);
+						"CREATE TABLE IF NOT EXISTS `Players` ("...
+						"`ID` INTEGER PRIMARY KEY %s,"...
+						"`SteamID` TEXT NOT NULL UNIQUE,"...
+						"`LastSeen`TEXT NOT NULL,"...
+						"`UseSounds` INTEGER NOT NULL DEFAULT 1,"...
+						"`CanSpeedRun` INTEGER NOT NULL DEFAULT 1);", Ai);
 	dSpeedRank.Query(OnDefault, query, 1, DBPrio_High);
 	dSpeedRank.Format(query, sizeof query, 
-					"CREATE TABLE IF NOT EXISTS `Times` ("...
-					"`ID`	INTEGER PRIMARY KEY %s,"...
-					"`PlayerName`	TEXT NOT NULL,"...
-					"`SteamID`	TEXT NOT NULL,"...
-					"`CourseNum`	INTEGER NOT NULL,"...
-					"`RunTime`	FLOAT NOT NULL,"...
-					"`PlayerClass`	TEXT NOT NULL,"...
-					"`CurDate`	TEXT NOT NULL,"...
-					"`Regen`	INTEGER NOT NULL,"...
-					"`Server`	TEXT NOT NULL,"...
-					"`MapName`	TEXT NOT NULL);", Ai);
+						"CREATE TABLE IF NOT EXISTS `Times` ("...
+						"`ID`	INTEGER PRIMARY KEY %s,"...
+						"`PlayerName`	TEXT NOT NULL,"...
+						"`SteamID`	TEXT NOT NULL,"...
+						"`CourseNum`	INTEGER NOT NULL,"...
+						"`RunTime`	FLOAT NOT NULL,"...
+						"`PlayerClass`	TEXT NOT NULL,"...
+						"`CurDate`	TEXT NOT NULL,"...
+						"`Regen`	INTEGER NOT NULL,"...
+						"`Server`	TEXT NOT NULL,"...
+						"`MapName`	TEXT NOT NULL);", Ai);
 	dSpeedRank.Query(OnDefault, query, 2, DBPrio_High);
 	dSpeedRank.Format(query, sizeof query, 
-					"CREATE TABLE IF NOT EXISTS `Cheaters` ("...
-					"`ID` INTEGER PRIMARY KEY AUTOINCREMENT,"...
-					"`Name`	TEXT NOT NULL,"...
-					"`SteamID`	INTEGER NOT NULL,"...
-					"`Added`	TEXT NOT NULL,"...
-					"`Reason`	TEXT NOT NULL);", Ai);
+						"CREATE TABLE IF NOT EXISTS `Cheaters` ("...
+						"`ID` INTEGER PRIMARY KEY AUTOINCREMENT,"...
+						"`Name`	TEXT NOT NULL,"...
+						"`SteamID`	INTEGER NOT NULL,"...
+						"`Added`	TEXT NOT NULL,"...
+						"`Reason`	TEXT NOT NULL);", Ai);
 	dSpeedRank.Query(OnDefault, query, 3, DBPrio_High);
 }
 /******************************************************
@@ -884,8 +907,9 @@ public void OnDatabaseConnect(Database db, const char[] error, any data)
 	// We were loaded late, why?
 	if (bLate)
 	{
-		if (!bLate) { DebugLog("Loaded normally."); } else { DebugLog("Loaded late."); }
+		if (bLate) { DebugLog("Loaded normally."); } else { DebugLog("Loaded late."); }
 		CPrintToChatAll("%s Plugin {dodgerblue}reloaded{default}.", TAG2);
+		iCourseCount = GetCourseCount();
 		for (int i = 1; i < MaxClients; i++)
 		{
 			bIsSpeedRunning[i] = false;
@@ -898,7 +922,7 @@ public void OnDatabaseConnect(Database db, const char[] error, any data)
 				GetPlayerProfile(i);
 				bNoSteamID[i] = false;
 			} else {
-				bNoSteamID[i] = true; bCanSpeedRun[i] = false; bNoSteamID[i] = true;
+				bNoSteamID[i] = true; bCanSpeedRun[i] = false;
 			}
 		}
 	}
@@ -1003,41 +1027,30 @@ public void OnLoadTimes(Database db, DBResultSet results, const char[] error, an
 	{
 		float start;
 		start = GetEngineTime();
-		char name[MAX_NAME_LENGTH];
-		if (cDebug.BoolValue) { DebugLog("Parsing speed runs (%i records)", results.RowCount); }
-		int soldier_record = 0, demoman_record = 0, engineer_record = 0;
+		
+		if (cDebug.BoolValue) { DebugLog("Parsing Times table (%i records)", results.RowCount); }
 		while (results.FetchRow())
 		{
-			if (results.FetchInt(5) == view_as<int>(TFClass_Soldier))
+			if (iTotalRecords >= MAX_RECORDS-1)
 			{
-				int class, course;
-				class = results.FetchInt(5);
-				course = results.FetchInt(3);
-				Soldier_Times.SetFloat(Key("Time", course, class, soldier_record), results.FetchFloat(4));
-				results.FetchString(1, name, sizeof name);
-				Soldier_Times.SetString(Key("Name", course, class, soldier_record), name);
-				soldier_record++;
-			} else if (results.FetchInt(5) == view_as<int>(TFClass_DemoMan)) {
-				int class, course;
-				class = results.FetchInt(5);
-				course = results.FetchInt(3);
-				Demoman_Times.SetFloat(Key("Time", course, class, demoman_record), results.FetchFloat(4));
-				results.FetchString(1, name, sizeof name);
-				Demoman_Times.SetString(Key("Name", course, class, demoman_record), name);
-				demoman_record++;
-			} else if (results.FetchInt(5) == view_as<int>(TFClass_Engineer)) {
-				int class, course;
-				class = results.FetchInt(5);
-				course = results.FetchInt(3);
-				Engineer_Times.SetFloat(Key("Time", course, class, engineer_record), results.FetchFloat(4));
-				results.FetchString(1, name, sizeof name);
-				Engineer_Times.SetString(Key("Name", course, class, engineer_record), name);
-				engineer_record++;
-			} else { continue; }
+				DebugLog("Cannot load any more records. (%i/%i)", iTotalRecords, results.RowCount);
+				return;
+			}
+			int class, course;
+			class = results.FetchInt(5);
+			course = results.FetchInt(3);	
+			fTimes[course][class][iRecords[course][class]] = results.FetchFloat(4);
+			results.FetchString(1, cName[course][class][iRecords[course][class]], sizeof cName[]);
+			if (cDebug.BoolValue)
+			{
+				DebugLog("Record: Name: %s, Course: %i, Time: %f", cName[course][class][iRecords[course][class]], course, fTimes[course][class][iRecords[course][class]]);
+			}				
+			iRecords[course][class]++; iTotalRecords++;
 		}
 		float end = (GetEngineTime() - start);
-		if (cDebug.BoolValue) { DebugLog("Loaded %i Soldier records, %i Demoman records, %i Engineeer records to memory in %f second(s)", soldier_record, 
-								demoman_record, engineer_record, end); }
+		if (cDebug.BoolValue) { DebugLog("Parsed %i record(s) in %f second(s)", results.RowCount, end); }
+	} else {
+		if (cDebug.BoolValue) { DebugLog("No times found for %s", sMapName); }	
 	}
 }
 public void OnShowCourse(Database db, DBResultSet results, const char[] error, any client)
@@ -1076,7 +1089,6 @@ public void OnGetPlayerProfile(Database db, DBResultSet results, const char[] er
 	if (results.RowCount > 0)
 	{
 		results.FetchRow();
-		bUseSounds[client] = view_as<bool>(results.FetchInt(3));
 		bCanSpeedRun[client] = view_as<bool>(results.FetchInt(4));
 		
 		char query[100], date[32], strcomp[32];
@@ -1121,14 +1133,17 @@ Action UpdateHud(Handle timer, any client)
 	int h = (now / 3600) % 24, m = (now / 60) % 60, s = now % 60;
 	bool bEngineer = false;
 	if (TF2_GetPlayerClass(client) == TFClass_Engineer) { bEngineer = true; }
-	SetHudTextParams(0.0, (bEngineer?0.34:0.0), 1.5, 255, 255, 0, 255, 0, 0.0, 0.0, 0.0);
-	ShowSyncHudText(client, tYourTime, "Time: %2ih %2im %2is", h, m, s);
+	if (bCanUpdate[client])
+	{
+		SetHudTextParams(0.0, (bEngineer?0.34:0.0), 1.5, 255, 255, 0, 255, 0, 0.0, 0.0, 0.0);
+		ShowSyncHudText(client, tYourTime, "Time: %2ih %2im %2is", h, m, s);
+	}
 	
 	float fNow = GetGameTime() - fRunnerTimeStart[client];
 	int class = view_as<int>(TF2_GetPlayerClass(client));
 	int bLeft, bHour, bMinute, bSecond;
 	
-	if (GetTopTime(iRunningCourse[client], class, 1) > fNow)
+	if (GetTopTime(iRunningCourse[client], class, 1) > fNow && bCanUpdate[client])
 	{
 		// Show how much time they got left to beat the #1 time
 		bLeft = RoundFloat(GetTopTime(iRunningCourse[client], class, 1) - fNow);
@@ -1137,7 +1152,7 @@ Action UpdateHud(Handle timer, any client)
 		bSecond = bLeft % 60;
 		SetHudTextParams(0.0, (bEngineer?0.38:0.05), 1.5, 255, 255, 0, 255, 0, 0.0, 0.0, 0.0);
 		ShowSyncHudText(client, tTimeToBeat, "#1 %02i:%02i:%02i", bHour, bMinute, bSecond);
-	} else if (GetTopTime(iRunningCourse[client], class, 2) > fNow)
+	} else if (GetTopTime(iRunningCourse[client], class, 2) > fNow && bCanUpdate[client])
 	{
 		// Can we beat the 2nd top time?
 		bLeft = RoundFloat(GetTopTime(iRunningCourse[client], class, 2) - fNow);
@@ -1153,21 +1168,13 @@ Action UpdateHud(Handle timer, any client)
 		bHour = (bLeft / 3600) % 24;
 		bMinute = (bLeft / 60) % 60;
 		bSecond = bLeft % 60;
-		SetHudTextParams(0.0, (bEngineer?0.38:0.05), 1.5, 255, 255, 0, 255, 0, 0.0, 0.0, 0.0);
-		ShowSyncHudText(client, tTimeToBeat, "#3 %02i:%02i:%02i", bHour, bMinute, bSecond);
-	}
-}
-float GetTopTime(int course, int class, int spot)
-{
-	if (class == 3)
-		return Soldier_Times.GetFloat(Key("Time", course, class, spot));
-	else if (class == 4)
-		return Demoman_Times.GetFloat(Key("Time", course, class, spot));
-	else if (class == 9)
-		return Engineer_Times.GetFloat(Key("Time", course, class, spot));
-	else
-		return 0.0;
+		if (bCanUpdate[client])
+		{
+			SetHudTextParams(0.0, (bEngineer?0.38:0.05), 1.5, 255, 255, 0, 255, 0, 0.0, 0.0, 0.0);
+			ShowSyncHudText(client, tTimeToBeat, "#3 %02i:%02i:%02i", bHour, bMinute, bSecond);
+		}
 
+	}
 }
 /******************************************************
 				Anti speed run cheating     		  *
@@ -1175,12 +1182,18 @@ float GetTopTime(int course, int class, int spot)
 // Need to find a way to check for gravity, and speed that doesn't break maps.
 public Action OnPlayerRunCmd(int client, int & buttons, int & impulse, float vel[3], float angles[3], int & weapon, int & subtype, int & cmdnum, int & tickcount, int & seed, int mouse[2])
 {
-	if (cEnabled.BoolValue)
+	if (cEnabled.BoolValue && bIsSpeedRunning[client])
 	{
-		// NOCLIP Cheat ... Remove the IsUserRoot when I'm done.'
-		if (GetEntityMoveType(client) == MOVETYPE_NOCLIP && bIsSpeedRunning[client] && !IsUserRoot(client))
+		iButtons[client] = buttons;
+		if (iButtons[client] & IN_SCORE)
 		{
-			if (tSpeedTimer[client] != INVALID_HANDLE) { delete tSpeedTimer; }
+			bCanUpdate[client] = false;
+		} else {
+			bCanUpdate[client] = true;
+		}
+		if (GetEntityMoveType(client) == MOVETYPE_NOCLIP)
+		{
+			if (tSpeedTimer[client] != INVALID_HANDLE) { delete tSpeedTimer[client]; }
 			bIsSpeedRunning[client] = false;
 			iRunningCourse[client] = 0;
 			if (jt)
@@ -1188,7 +1201,7 @@ public Action OnPlayerRunCmd(int client, int & buttons, int & impulse, float vel
 				JT_EndSpeedRun(client);
 				JT_ReloadPlayerSettings(client);
 			}
-			CPrintToChat(client, "%N NOCLIP detected. Canceling speed run.", TAG2, client);
+			CPrintToChatAll("%s %N NOCLIP detected. Canceling speed run.", TAG2, client);
 		}
 	}
 }
